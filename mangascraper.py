@@ -1,15 +1,11 @@
 import json
-import re
-from bs4 import BeautifulSoup
-from datetime import datetime
 import time
-import requests
+from curl_cffi import requests
 import os
 import img2pdf
 import ctypes
 import shutil
 from PIL import Image
-import sys
 import argparse
 
 def prevent_sleep():
@@ -96,31 +92,31 @@ def make_pdf(folder_path, pdf_name):
         print(f"  [Error] PDF creation failed: {e}")
         return False
 
-def download_pdf(gallery_data):
-    safe_title = re.sub(r'[<>:"/\\|?*]', '', gallery_data['title']['english'])[:50]
-    temp_folder = os.path.join(DOWNLOAD_BASE, f"TEMP_{gallery_data['id']}")
-    create_folder(temp_folder)
+# def download_pdf(gallery_data):
+#     safe_title = re.sub(r'[<>:"/\\|?*]', '', gallery_data['title']['english'])[:50]
+#     temp_folder = os.path.join(DOWNLOAD_BASE, f"TEMP_{gallery_data['id']}")
+#     create_folder(temp_folder)
 
-    print(f"Downloading {gallery_data['num_pages']} pages to temp folder...")
+#     print(f"Downloading {gallery_data['num_pages']} pages to temp folder...")
         
-    # Download Pages
-    ext_map = {'j': 'jpg', 'p': 'png', 'w': 'webp', 'g': 'gif'}
-    for i, page in enumerate(gallery_data['images']['pages'], start=1):
-        ext = ext_map.get(page['t'], 'jpg')
-        url = f"https://i.nhentai.net/galleries/{gallery_data['media_id']}/{i}.{ext}"
-        download_file(url, temp_folder, f"{i}.{ext}")
+#     # Download Pages
+#     ext_map = {'j': 'jpg', 'p': 'png', 'w': 'webp', 'g': 'gif'}
+#     for i, page in enumerate(gallery_data['images']['pages'], start=1):
+#         ext = ext_map.get(page['t'], 'jpg')
+#         url = f"https://i.nhentai.net/galleries/{gallery_data['media_id']}/{i}.{ext}"
+#         download_file(url, temp_folder, f"{i}.{ext}")
 
-        # 3. CONVERT TO PDF
-    pdf_filename = f"{gallery_data['id']} - {safe_title}.pdf"
-    success = make_pdf(temp_folder, pdf_filename)
+#         # 3. CONVERT TO PDF
+#     pdf_filename = f"{gallery_data['id']} - {safe_title}.pdf"
+#     success = make_pdf(temp_folder, pdf_filename)
         
-        # 4. CLEANUP (Delete the messy folder)
-    if success:
-        print("  [Cleanup] Deleting temp images...")
-        shutil.rmtree(temp_folder)
-        print("Done.")
-    else:
-        print("Warning: PDF failed, keeping images.")
+#         # 4. CLEANUP (Delete the messy folder)
+#     if success:
+#         print("  [Cleanup] Deleting temp images...")
+#         shutil.rmtree(temp_folder)
+#         print("Done.")
+#     else:
+#         print("Warning: PDF failed, keeping images.")
 
 def saveid(filename,manga_id):
     with open(filename,"a") as filp:
@@ -181,11 +177,12 @@ for id in range(START_RANGE,END_RANGE+1):
         continue
 
 
-    nhentai_url=f"https://nhentai.net/g/{id}/"
+    nhentai_url=f"https://doujin-api.onrender.com/manga_id={id}"
+
     HEADERS = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
     }
-    response=requests.get(url=nhentai_url,headers=HEADERS)
+    response=requests.get(url=nhentai_url,headers=HEADERS, impersonate="chrome")
     
     if response.status_code==404:
         print(f"{id} doesn't Exist. Skipping...")
@@ -204,67 +201,25 @@ for id in range(START_RANGE,END_RANGE+1):
         data_payload = {}
         consecutive_faliure=0
 
-        # --- PART 1: EXTRACT HIDDEN JSON METADATA ---
-        # This regex hunts for the specific window._gallery variable
-        json_pattern = r"window\._gallery\s*=\s*JSON\.parse\(\"(.*?)\"\);"
-        match = re.search(json_pattern, response.text)
+        data=response.json()
+        recommendations=data.get("recommendations",[])
 
-        if match:
-            # The JSON string is often double-escaped in these scripts
-            clean_json_str = match.group(1).encode('utf-8').decode('unicode_escape')
-            gallery_data = json.loads(clean_json_str)
-
-            # download_pdf(gallery_data)
-            
-            print(f"Fetching: {id}-{gallery_data['title']['english']}")
-
-            data_payload = {
-                'id': int(gallery_data['id']),
-                'title': gallery_data['title']['english'],
-                'date': datetime.fromtimestamp(gallery_data['upload_date']).strftime('%Y-%m-%d'),
-                'parodies':[tag['name'] for tag in gallery_data['tags'] if tag['type'] == 'parody'],
-                'charecters':[tag['name'] for tag in gallery_data['tags'] if tag['type'] == 'character'],
-                'groups': [tag['name'] for tag in gallery_data['tags'] if tag['type'] == 'group'],
-                'categories': [tag['name'] for tag in gallery_data['tags'] if tag['type'] == 'category'],
-                'language':[tag['name'] for tag in gallery_data['tags'] if tag['type'] == 'language'],
-                'favorites': int(gallery_data['num_favorites']),
-                'tags': [tag['name'] for tag in gallery_data['tags'] if tag['type'] == 'tag'],
-                'artists': [tag['name'] for tag in gallery_data['tags'] if tag['type'] == 'artist'],
-                'num_pages': int(gallery_data['num_pages'])
-            }
-        else:
-            print("CRITICAL: Could not find gallery JSON.")
-
-        # --- PART 2: EXTRACT RECOMMENDATIONS ---
-        soup = BeautifulSoup(response.text, 'html.parser')
-        recommendations = []
-        related_container = soup.find('div', id='related-container')
-
-        if related_container:
-            for gallery in related_container.find_all('div', class_='gallery'):
-                link_tag = gallery.find('a', class_='cover')
-                caption_tag = gallery.find('div', class_='caption')
-                
-                if link_tag and caption_tag:
-                    rec_id = link_tag['href'].strip('/').split('/')[-1]
-                    rec_title = caption_tag.text
-                    recommendations.append({'id': int(rec_id), 'title': rec_title})
-
-        data_payload['recommendations'] = recommendations
-
-        # --- PART 3: EXTRACT COVER IMAGE ---
-        cover_div = soup.find('div', id='cover')
-        if cover_div:
-            # We must look for 'data-src', NOT 'src'
-            cover_img = cover_div.find('img')
-            if cover_img and 'data-src' in cover_img.attrs:
-                # The URL usually starts with //, so we prepend https:
-                cover_url = "https:" + cover_img['data-src']
-                data_payload['cover_image'] = cover_url
-            else:
-                print("Warning: Cover image found but no data-src attribute.")
-        else:
-            print("Warning: Could not find cover div.")
+        data_payload={
+            "id" : data["id"],
+            "title" : data["title"],
+            "date" : data["date"],
+            "parodies" : data["parodies"] if data["parodies"] else [],
+            "charecters" : data["characters"] if data["characters"] else [],
+            "groups" : data["groups"] if data["groups"] else [],
+            "categories" : data["categories"] if data["categories"] else [],
+            "language" : data["language"] if data["language"] else [],
+            "favorites" : data["favorites"] if data["favorites"] else None,
+            "tags" : data["tags"] if data["tags"] else [],
+            "artists" : data["artists"] if data["artists"] else [],
+            "num_pages" : data["num_pages"] if data["num_pages"] else None,
+            "recommendations" : [{"id" : rec["id"], "title" : rec["title"]} for rec in recommendations],
+            "cover_image" : data["cover_image"]
+        }
 
         saveid(good_ids_filepath,id)
         good_id.add(id)
