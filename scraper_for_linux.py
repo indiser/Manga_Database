@@ -1,10 +1,7 @@
 import os
-import re
 import json
 import asyncio
 import aiohttp
-from bs4 import BeautifulSoup
-from datetime import datetime
 import random
 
 
@@ -78,53 +75,24 @@ async def scrape_manga(session, manga_id, good_ids, bad_ids, file_lock, semaphor
                     stats['errors'] += 1
                     return
                 
-                html = await response.text()
-                
-                json_pattern = r"window\._gallery\s*=\s*JSON\.parse\(\"(.*?)\"\);"
-                match = re.search(json_pattern, html)
-                
-                if not match:
-                    stats['errors'] += 1
-                    return
-                
-                clean_json_str = match.group(1).encode('utf-8').decode('unicode_escape')
-                gallery_data = json.loads(clean_json_str)
-                
-                soup = BeautifulSoup(html, 'html.parser')
-                
-                recommendations = []
-                related_container = soup.find('div', id='related-container')
-                if related_container:
-                    for gallery in related_container.find_all('div', class_='gallery'):
-                        link_tag = gallery.find('a', class_='cover')
-                        caption_tag = gallery.find('div', class_='caption')
-                        if link_tag and caption_tag:
-                            rec_id = link_tag['href'].strip('/').split('/')[-1]
-                            rec_title = caption_tag.text
-                            recommendations.append({'id': int(rec_id), 'title': rec_title})
-                
-                cover_url = None
-                cover_div = soup.find('div', id='cover')
-                if cover_div:
-                    cover_img = cover_div.find('img')
-                    if cover_img and 'data-src' in cover_img.attrs:
-                        cover_url = "https:" + cover_img['data-src']
-                
-                data_payload = {
-                    'id': int(gallery_data['id']),
-                    'title': gallery_data['title']['english'],
-                    'date': datetime.fromtimestamp(gallery_data['upload_date']).strftime('%Y-%m-%d'),
-                    'parodies': [tag['name'] for tag in gallery_data['tags'] if tag['type'] == 'parody'],
-                    'charecters': [tag['name'] for tag in gallery_data['tags'] if tag['type'] == 'character'],
-                    'groups': [tag['name'] for tag in gallery_data['tags'] if tag['type'] == 'group'],
-                    'categories': [tag['name'] for tag in gallery_data['tags'] if tag['type'] == 'category'],
-                    'language': [tag['name'] for tag in gallery_data['tags'] if tag['type'] == 'language'],
-                    'favorites': int(gallery_data['num_favorites']),
-                    'tags': [tag['name'] for tag in gallery_data['tags'] if tag['type'] == 'tag'],
-                    'artists': [tag['name'] for tag in gallery_data['tags'] if tag['type'] == 'artist'],
-                    'num_pages': int(gallery_data['num_pages']),
-                    'recommendations': recommendations,
-                    'cover_image': cover_url
+                data=await response.json()
+                recommendations=data.get("recommendations",[])
+
+                data_payload={
+                    "id" : data["id"],
+                    "title" : data["title"],
+                    "date" : data["date"],
+                    "parodies" : data["parodies"] if data["parodies"] else [],
+                    "charecters" : data["characters"] if data["characters"] else [],
+                    "groups" : data["groups"] if data["groups"] else [],
+                    "categories" : data["categories"] if data["categories"] else [],
+                    "language" : data["language"] if data["language"] else [],
+                    "favorites" : data["favorites"] if data["favorites"] else None,
+                    "tags" : data["tags"] if data["tags"] else [],
+                    "artists" : data["artists"] if data["artists"] else [],
+                    "num_pages" : data["num_pages"] if data["num_pages"] else None,
+                    "recommendations" : [{"id" : rec["id"], "title" : rec["title"]} for rec in recommendations],
+                    "cover_image" : data["cover_image"]
                 }
                 
                 await save_result(data_payload, file_lock)
@@ -133,7 +101,7 @@ async def scrape_manga(session, manga_id, good_ids, bad_ids, file_lock, semaphor
                 stats['success'] += 1
                 stats['consecutive_failures'] = 0
                 
-                print(f"✓ {manga_id}: {gallery_data['title']['english']}")
+                print(f"✓ {manga_id}: {data['title']}")
                 
                 await asyncio.sleep(DELAY)
                 
