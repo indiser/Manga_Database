@@ -54,7 +54,7 @@ async def scrape_manga(session, manga_id, good_ids, bad_ids, file_lock, semaphor
         return
     
     async with semaphore:
-        url = f"https://nhentai.net/g/{manga_id}/"
+        url = f"https://doujin-api.onrender.com/manga_id={manga_id}"
         
         try:
             async with session.get(url, headers=get_headers()) as response:
